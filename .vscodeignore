@@ -1,0 +1,9 @@
+test.js
+test-*.js
+renovate.json
+*.vsix
+.gitignore
+.github/**
+CONTRIBUTING.md
+package-lock.json
+node_modules/**

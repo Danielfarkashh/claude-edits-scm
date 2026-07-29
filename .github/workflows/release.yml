@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node test-hunks.js 5000
+      - run: node test-win32.js
+      - run: node test-title.js
+      - run: node test-delta.js
+      - run: node test-attrib.js 2000
+      - run: npm install
+      - run: npm run package
+      - name: Create GitHub Release
+        run: gh release create "${{ github.ref_name }}" *.vsix --title "${{ github.ref_name }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

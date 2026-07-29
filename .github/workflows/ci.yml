@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Only the pure property-test suites run in CI — test.js / test-overlay.js /
+      # test-e2e.js read real ~/.claude data or spawn a live `claude -p` session,
+      # which CI runners don't have.
+      - run: node --check lib.js
+      - run: node --check extension.js
+      - run: node --check cli.js
+      - run: node test-hunks.js 5000
+      - run: node test-win32.js
+      - run: node test-title.js
+      - run: node test-delta.js
+      - run: node test-attrib.js 2000
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: '*.vsix'

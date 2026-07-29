@@ -1,0 +1,273 @@
+{
+  "name": "claude-edits-scm",
+  "displayName": "Claude Edits (Source Control)",
+  "description": "Files changed by Claude Code sessions, shown in the native Source Control view — per-file diff, keep, undo. No new UI, no workflow change.",
+  "version": "0.5.0",
+  "publisher": "dfarkash",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Danielfarkashh/claude-edits-scm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Danielfarkashh/claude-edits-scm/issues"
+  },
+  "homepage": "https://github.com/Danielfarkashh/claude-edits-scm#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "SCM Providers"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "diff",
+    "revert",
+    "scm"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "extensionDependencies": [
+    "anthropic.claude-code"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "test": "node test-hunks.js && node test-win32.js && node test-title.js && node test-delta.js && node test-attrib.js",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.0.0"
+  },
+  "contributes": {
+    "views": {
+      "claude-sidebar-secondary": [
+        {
+          "id": "claudeEditsView",
+          "name": "Changed Files",
+          "icon": "$(diff)",
+          "contextualTitle": "Claude Edits"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Edits",
+      "properties": {
+        "claudeEdits.lookbackHours": {
+          "type": "number",
+          "default": 48,
+          "description": "Show Claude Code sessions whose transcript changed within this many hours."
+        },
+        "claudeEdits.maxSessions": {
+          "type": "number",
+          "default": 6,
+          "description": "Maximum number of recent sessions to display."
+        },
+        "claudeEdits.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Keep/Revert CodeLens actions above each Claude change in the editor."
+        },
+        "claudeEdits.claudeOnly": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attribute changes via the session transcript and show Keep/Revert only for hunks Claude authored; files whose remaining changes are only yours are hidden. Turn off to review every difference against the baseline."
+        },
+        "claudeEdits.scmView": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also show a \"Claude Edits\" section in the Source Control view and quick-diff gutter markers in editors. Takes effect after a window reload."
+        },
+        "claudeEdits.includeGlobs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["**/.claude/**"],
+          "description": "Paths to list even when outside the workspace folders (e.g. Claude's memory under ~/.claude). Glob: ** spans folders, * stays within one segment."
+        },
+        "claudeEdits.excludeGlobs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["/tmp/claude-*/**"],
+          "description": "Paths to never list (wins over includes). Default hides Claude's throwaway scratchpad under /tmp."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "claudeEdits.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.openDiff",
+        "title": "Open Diff",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.keep",
+        "title": "Keep (dismiss from list)",
+        "icon": "$(check)",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.undo",
+        "title": "Undo (restore pre-Claude content)",
+        "icon": "$(discard)",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.keepAll",
+        "title": "Keep All",
+        "icon": "$(check-all)",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.undoAll",
+        "title": "Undo All",
+        "icon": "$(history)",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.diagnostics",
+        "title": "Diagnostics (why is the list empty?)",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.keepHunk",
+        "title": "Keep This Change",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.revertHunk",
+        "title": "Revert This Change",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.keepFileInEditor",
+        "title": "Keep All Changes in This File",
+        "category": "Claude Edits"
+      },
+      {
+        "command": "claudeEdits.revertFileInEditor",
+        "title": "Revert All Changes in This File",
+        "category": "Claude Edits"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "claudeEdits.openDiff", "when": "false" },
+        { "command": "claudeEdits.keep", "when": "false" },
+        { "command": "claudeEdits.undo", "when": "false" },
+        { "command": "claudeEdits.keepHunk", "when": "false" },
+        { "command": "claudeEdits.revertHunk", "when": "false" },
+        { "command": "claudeEdits.keepFileInEditor", "when": "claudeEdits.activeFileChanged" },
+        { "command": "claudeEdits.revertFileInEditor", "when": "claudeEdits.activeFileChanged" }
+      ],
+      "editor/context": [
+        {
+          "command": "claudeEdits.keepFileInEditor",
+          "when": "claudeEdits.activeFileChanged && resourceScheme == file",
+          "group": "2_claudeEdits@1"
+        },
+        {
+          "command": "claudeEdits.revertFileInEditor",
+          "when": "claudeEdits.activeFileChanged && resourceScheme == file",
+          "group": "2_claudeEdits@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "claudeEdits.refresh",
+          "when": "view == claudeEditsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeEdits.keepAll",
+          "when": "view == claudeEditsView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "claudeEdits.undoAll",
+          "when": "view == claudeEditsView",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "claudeEdits.undo",
+          "when": "view == claudeEditsView && viewItem == claudeEdit",
+          "group": "inline@1"
+        },
+        {
+          "command": "claudeEdits.keep",
+          "when": "view == claudeEditsView && viewItem == claudeEdit",
+          "group": "inline@2"
+        },
+        {
+          "command": "claudeEdits.undo",
+          "when": "view == claudeEditsView && viewItem == claudeSession",
+          "group": "inline@1"
+        },
+        {
+          "command": "claudeEdits.keep",
+          "when": "view == claudeEditsView && viewItem == claudeSession",
+          "group": "inline@2"
+        },
+        {
+          "command": "claudeEdits.undo",
+          "when": "view == claudeEditsView && viewItem =~ /claudeEdit|claudeSession/",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "claudeEdits.keep",
+          "when": "view == claudeEditsView && viewItem =~ /claudeEdit|claudeSession/",
+          "group": "1_modification@2"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "claudeEdits.refresh",
+          "when": "scmProvider == claudeEdits",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeEdits.keepAll",
+          "when": "scmProvider == claudeEdits",
+          "group": "navigation@2"
+        },
+        {
+          "command": "claudeEdits.undoAll",
+          "when": "scmProvider == claudeEdits",
+          "group": "navigation@3"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "claudeEdits.keep",
+          "when": "scmProvider == claudeEdits && scmResourceState == claudeEdit",
+          "group": "inline@2"
+        },
+        {
+          "command": "claudeEdits.undo",
+          "when": "scmProvider == claudeEdits && scmResourceState == claudeEdit",
+          "group": "inline@1"
+        },
+        {
+          "command": "claudeEdits.keep",
+          "when": "scmProvider == claudeEdits && scmResourceState == claudeEdit",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "claudeEdits.undo",
+          "when": "scmProvider == claudeEdits && scmResourceState == claudeEdit",
+          "group": "1_modification@2"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+*.vsix
+node_modules/
+**/target/
+
+### IntelliJ IDEA ###
+../.idea
+*.iws
+*.iml
+*.ipr
+
+### Mac OS ###
+.DS_Store
