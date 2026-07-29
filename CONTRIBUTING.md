@@ -7,7 +7,7 @@ Thanks for considering a contribution — this started as a personal itch-scratc
 No build step — plain JavaScript, install with `npm install` (dev-only dependency: `@vscode/vsce` for packaging). Load the folder with **Run Extension** in VS Code's debug view (`F5`), or package and install a `.vsix` locally:
 
 ```bash
-npx @vscode/vsce package --allow-missing-repository
+npx @vscode/vsce package
 code --install-extension claude-edits-scm-<version>.vsix
 ```
 

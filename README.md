@@ -51,7 +51,9 @@ Keeping (a hunk or a whole file) records the accepted content in a private **ove
 
 ## Download & install
 
-Grab the `.vsix` from the [latest release](https://github.com/Danielfarkashh/claude-edits-scm/releases/latest), then:
+**From the Marketplace:** search "Claude Edits" in VS Code's Extensions view, or [install directly](https://marketplace.visualstudio.com/items?itemName=dfarkash.claude-edits-scm).
+
+**From a release** (e.g. to pin a specific version): grab the `.vsix` from the [latest release](https://github.com/Danielfarkashh/claude-edits-scm/releases/latest), then:
 
 ```bash
 code --install-extension claude-edits-scm-<version>.vsix
@@ -59,8 +61,8 @@ code --install-extension claude-edits-scm-<version>.vsix
 
 then **Developer: Reload Window**. In a WSL window run this in the integrated terminal so it installs on the WSL (server) side; on native Windows/macOS run it anywhere. You can also install via the Extensions view → `…` menu → **Install from VSIX**.
 
-Not yet on the VS Code Marketplace — this is a young project; a listing may follow once it's had more real-world mileage. PRs and issues welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
+PRs and issues welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Dev
 
-Plain JavaScript, no build step. `npm test` (or `node test-hunks.js`, `node test-attrib.js <workspaceRoot>`, etc. individually) runs the property-test suites; most also exercise real `~/.claude` data when a workspace root is passed, so results vary by machine — that's expected. CI (GitHub Actions, `.github/workflows/ci.yml`) runs the pure property tests on every push/PR. Package with `npx @vscode/vsce package --allow-missing-repository`; tagging a release (`vX.Y.Z`) triggers `.github/workflows/release.yml` to build the vsix and attach it to a GitHub Release.
+Plain JavaScript, no build step. `npm test` (or `node test-hunks.js`, `node test-attrib.js <workspaceRoot>`, etc. individually) runs the property-test suites; most also exercise real `~/.claude` data when a workspace root is passed, so results vary by machine — that's expected. CI (GitHub Actions, `.github/workflows/ci.yml`) runs the pure property tests on every push/PR. Package with `npx @vscode/vsce package`; tagging a release (`vX.Y.Z`) triggers `.github/workflows/release.yml` to build the vsix and attach it to a GitHub Release.

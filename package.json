@@ -1,9 +1,10 @@
 {
   "name": "claude-edits-scm",
-  "displayName": "Claude Edits (Source Control)",
-  "description": "Files changed by Claude Code sessions, shown in the native Source Control view — per-file diff, keep, undo. No new UI, no workflow change.",
+  "displayName": "Claude Edits",
+  "description": "Copilot-style review of Claude Code's edits: a Changed Files view with native diffs, per-hunk Keep/Undo, and automatic Claude-vs-you attribution so your own edits are never flagged.",
   "version": "0.5.0",
   "publisher": "dfarkash",
+  "icon": "resources/icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,7 +18,8 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "SCM Providers"
+    "SCM Providers",
+    "Other"
   ],
   "keywords": [
     "claude",
@@ -38,7 +40,7 @@
   ],
   "scripts": {
     "test": "node test-hunks.js && node test-win32.js && node test-title.js && node test-delta.js && node test-attrib.js",
-    "package": "vsce package --allow-missing-repository"
+    "package": "vsce package"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.0.0"

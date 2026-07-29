@@ -4,6 +4,7 @@ renovate.json
 *.vsix
 .gitignore
 .github/**
+.vscode/**
 CONTRIBUTING.md
 package-lock.json
 node_modules/**
