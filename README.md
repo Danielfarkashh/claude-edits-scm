@@ -1,9 +1,9 @@
-# Claude Edits
+# Claude Diff & Edit
 
 [![CI](https://github.com/Danielfarkashh/claude-edits-scm/actions/workflows/ci.yml/badge.svg)](https://github.com/Danielfarkashh/claude-edits-scm/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Copilot-style review of **Claude Code** edits, additive to the workflow you already have — no webview, no chat wrapper, keep bypass/auto mode on.
+Diff and review **Claude Code**'s edits, additive to the workflow you already have — no webview, no chat wrapper, keep bypass/auto mode on.
 
 ## Where changes show up (no navigation needed)
 
