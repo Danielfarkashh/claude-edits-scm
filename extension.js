@@ -18,6 +18,7 @@ let changeByUri = new Map(); // fileUri string -> change
 let lastGroups = []; // visible (non-dismissed) groups, feeds tree + scm
 let refreshTimer = null;
 let watchers = [];
+let lastRenderSignature = null; // skip redraw when a refresh finds nothing visibly different
 
 function cfg() {
   const c = vscode.workspace.getConfiguration('claudeEdits');
@@ -27,6 +28,7 @@ function cfg() {
     codeLens: c.get('codeLens', true),
     claudeOnly: c.get('claudeOnly', true),
     scmView: c.get('scmView', false),
+    showFileBadge: c.get('showFileBadge', false),
     includeGlobs: c.get('includeGlobs', ['**/.claude/**']),
     excludeGlobs: c.get('excludeGlobs', ['/tmp/claude-*/**']),
   };
@@ -218,6 +220,19 @@ async function refresh() {
   }
   if (gen !== refreshGen) return; // analysis reads may have raced a newer refresh
   lastGroups = visGroups;
+
+  // Claude edits every few seconds, and each one touches the file-history
+  // watcher regardless of whether it changes anything THIS workspace is
+  // showing (a different file, an already-fully-kept file, excluded paths).
+  // Redrawing the tree/decorations/CodeLenses on every such no-op refresh is
+  // what caused the reported flicker — skip the visible re-render entirely
+  // when the rendered content is identical to last time.
+  const signature = JSON.stringify(visGroups.map((g) => [
+    g.sessionId, g.title, g.mtimeMs,
+    g.changes.map((c) => [c.absPath, c.status, c.analysis?.add, c.analysis?.del, c.analysis?.ok]),
+  ]));
+  if (signature === lastRenderSignature) return;
+  lastRenderSignature = signature;
 
   if (sc) updateScm(visGroups);
   fireUiEvents();
@@ -688,10 +703,11 @@ function activate(context) {
     vscode.window.registerFileDecorationProvider({
       onDidChangeFileDecorations: decoEmitter.event,
       provideFileDecoration(uri) {
+        if (!cfg().showFileBadge) return undefined;
         const ch = changeByUri.get(uri.toString());
         if (!ch) return undefined;
         return {
-          badge: 'C',
+          badge: 'C', // always this one letter — just marks "Claude touched this file", nothing else varies
           tooltip: statusLabel(ch),
           color: new vscode.ThemeColor(ch.status === 'created'
             ? 'gitDecoration.untrackedResourceForeground'
@@ -727,7 +743,13 @@ function activate(context) {
     vscode.workspace.onDidSaveTextDocument(scheduleRefresh),
     vscode.window.onDidChangeActiveTextEditor(updateActiveContext),
     vscode.workspace.onDidChangeWorkspaceFolders(() => { armWatchers(); scheduleRefresh(); }),
-    vscode.workspace.onDidChangeConfiguration((e) => { if (e.affectsConfiguration('claudeEdits')) { scheduleRefresh(); codeLensEmitter.fire(); } }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('claudeEdits')) return;
+      codeLensEmitter.fire();
+      decoEmitter.fire(undefined); // e.g. showFileBadge toggled — data may be unchanged, but rendering must update now
+      lastRenderSignature = null; // force the next refresh to redraw even if the data itself is identical
+      scheduleRefresh();
+    }),
     { dispose: () => { for (const w of watchers) { try { w.close(); } catch { /* noop */ } } } },
   );
 

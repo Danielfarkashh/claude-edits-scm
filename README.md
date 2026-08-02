@@ -9,7 +9,7 @@ Diff and review **Claude Code**'s edits, additive to the workflow you already ha
 
 - **"Changed Files" view inside the Claude Code sidebar** (stacked under the chat), grouped by session, with a count badge on the Claude icon. Sessions carry Claude's own generated title — the same one `claude --resume` lists — falling back to the first prompt for sessions too young to have one.
 - **Status bar**: `⧉ Claude N` — click to focus the list.
-- **`C` badges** on editor tabs / Explorer for every file Claude touched.
+- Optional **`C` badge** (always that one letter — just means "Claude touched this file", nothing else varies) on editor tabs / Explorer, alongside git's own M/U/A letter — off by default since the list below, the status bar, and CodeLenses already cover it; enable with `claudeEdits.showFileBadge`.
 - Changes to **Claude's own memory** (`~/.claude/…`) are listed even though they live outside your workspace; throwaway scratchpad files under `/tmp/claude-*` are hidden (both tunable via `claudeEdits.includeGlobs` / `excludeGlobs`).
 - Optional: a **"Claude Edits"** section in the Source Control view plus quick-diff gutter markers — off by default, enable with `claudeEdits.scmView` (reload required).
 - Works **retroactively** and in **any permission mode** — it reads the checkpoint snapshots Claude Code itself writes before every edit (`~/.claude/file-history/`), the same data the rewind feature uses.
@@ -46,7 +46,7 @@ Keeping (a hunk or a whole file) records the accepted content in a private **ove
 
 - Only edits made via Claude's `Edit`/`Write`/`NotebookEdit` tools are tracked. Changes Claude makes through **Bash** (`sed`, `mv`, generated scripts) are not checkpointed by Claude Code and won't appear. Renames show as deleted at the old path.
 - "Undo" on a file you hand-edited after Claude rolls your edits back too — check the diff first.
-- Settings: `claudeEdits.lookbackHours` (48), `claudeEdits.maxSessions` (6), `claudeEdits.codeLens` (true), `claudeEdits.claudeOnly` (true), `claudeEdits.scmView` (false), `claudeEdits.includeGlobs` (`["**/.claude/**"]`), `claudeEdits.excludeGlobs` (`["/tmp/claude-*/**"]`).
+- Settings: `claudeEdits.lookbackHours` (48), `claudeEdits.maxSessions` (6), `claudeEdits.codeLens` (true), `claudeEdits.claudeOnly` (true), `claudeEdits.scmView` (false), `claudeEdits.showFileBadge` (false), `claudeEdits.includeGlobs` (`["**/.claude/**"]`), `claudeEdits.excludeGlobs` (`["/tmp/claude-*/**"]`).
 - Data format is Claude Code internal (verified on 2.1.220); a future Claude Code release could change it.
 
 ## Download & install

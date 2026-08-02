@@ -2,7 +2,7 @@
   "name": "claude-edits-scm",
   "displayName": "Claude Diff & Edit",
   "description": "Review Claude Code's edits with native diffs, per-hunk Keep/Undo, and automatic Claude-vs-you attribution so your own edits are never flagged.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "publisher": "dfarkash",
   "icon": "resources/icon.png",
   "license": "MIT",
@@ -86,15 +86,28 @@
         },
         "claudeEdits.includeGlobs": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["**/.claude/**"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.claude/**"
+          ],
           "description": "Paths to list even when outside the workspace folders (e.g. Claude's memory under ~/.claude). Glob: ** spans folders, * stays within one segment."
         },
         "claudeEdits.excludeGlobs": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["/tmp/claude-*/**"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "/tmp/claude-*/**"
+          ],
           "description": "Paths to never list (wins over includes). Default hides Claude's throwaway scratchpad under /tmp."
+        },
+        "claudeEdits.showFileBadge": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a 'C' badge on editor tabs and Explorer entries for files Claude has changed, alongside git's own M/U/A letter. Off by default — the Changed Files view, status bar counter, and CodeLenses already surface this."
         }
       }
     },
@@ -162,13 +175,34 @@
     ],
     "menus": {
       "commandPalette": [
-        { "command": "claudeEdits.openDiff", "when": "false" },
-        { "command": "claudeEdits.keep", "when": "false" },
-        { "command": "claudeEdits.undo", "when": "false" },
-        { "command": "claudeEdits.keepHunk", "when": "false" },
-        { "command": "claudeEdits.revertHunk", "when": "false" },
-        { "command": "claudeEdits.keepFileInEditor", "when": "claudeEdits.activeFileChanged" },
-        { "command": "claudeEdits.revertFileInEditor", "when": "claudeEdits.activeFileChanged" }
+        {
+          "command": "claudeEdits.openDiff",
+          "when": "false"
+        },
+        {
+          "command": "claudeEdits.keep",
+          "when": "false"
+        },
+        {
+          "command": "claudeEdits.undo",
+          "when": "false"
+        },
+        {
+          "command": "claudeEdits.keepHunk",
+          "when": "false"
+        },
+        {
+          "command": "claudeEdits.revertHunk",
+          "when": "false"
+        },
+        {
+          "command": "claudeEdits.keepFileInEditor",
+          "when": "claudeEdits.activeFileChanged"
+        },
+        {
+          "command": "claudeEdits.revertFileInEditor",
+          "when": "claudeEdits.activeFileChanged"
+        }
       ],
       "editor/context": [
         {
@@ -191,42 +225,42 @@
         {
           "command": "claudeEdits.keepAll",
           "when": "view == claudeEditsView",
-          "group": "navigation@2"
+          "group": "1_bulk@1"
         },
         {
           "command": "claudeEdits.undoAll",
           "when": "view == claudeEditsView",
-          "group": "navigation@3"
+          "group": "1_bulk@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "claudeEdits.undo",
+          "command": "claudeEdits.keep",
           "when": "view == claudeEditsView && viewItem == claudeEdit",
           "group": "inline@1"
         },
         {
-          "command": "claudeEdits.keep",
+          "command": "claudeEdits.undo",
           "when": "view == claudeEditsView && viewItem == claudeEdit",
           "group": "inline@2"
         },
         {
-          "command": "claudeEdits.undo",
+          "command": "claudeEdits.keep",
           "when": "view == claudeEditsView && viewItem == claudeSession",
           "group": "inline@1"
         },
         {
-          "command": "claudeEdits.keep",
+          "command": "claudeEdits.undo",
           "when": "view == claudeEditsView && viewItem == claudeSession",
           "group": "inline@2"
         },
         {
-          "command": "claudeEdits.undo",
+          "command": "claudeEdits.keep",
           "when": "view == claudeEditsView && viewItem =~ /claudeEdit|claudeSession/",
           "group": "1_modification@1"
         },
         {
-          "command": "claudeEdits.keep",
+          "command": "claudeEdits.undo",
           "when": "view == claudeEditsView && viewItem =~ /claudeEdit|claudeSession/",
           "group": "1_modification@2"
         }
@@ -240,24 +274,24 @@
         {
           "command": "claudeEdits.keepAll",
           "when": "scmProvider == claudeEdits",
-          "group": "navigation@2"
+          "group": "1_bulk@1"
         },
         {
           "command": "claudeEdits.undoAll",
           "when": "scmProvider == claudeEdits",
-          "group": "navigation@3"
+          "group": "1_bulk@2"
         }
       ],
       "scm/resourceState/context": [
         {
           "command": "claudeEdits.keep",
           "when": "scmProvider == claudeEdits && scmResourceState == claudeEdit",
-          "group": "inline@2"
+          "group": "inline@1"
         },
         {
           "command": "claudeEdits.undo",
           "when": "scmProvider == claudeEdits && scmResourceState == claudeEdit",
-          "group": "inline@1"
+          "group": "inline@2"
         },
         {
           "command": "claudeEdits.keep",
