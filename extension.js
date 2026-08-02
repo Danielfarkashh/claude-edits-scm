@@ -325,9 +325,17 @@ const treeProvider = {
   },
 };
 
+// A pure trailing debounce resets on every edit, so continuous edit bursts
+// (Claude iterating every few seconds) still redraw the tree on close to
+// every edit once gaps exceed the window. VS Code documents per-node tree
+// refreshes as unreliable once a tree has more than one top-level item
+// (github.com/microsoft/vscode#244952) — our tree promotes files to root
+// when only one session is shown, so that's easy to hit. Rather than risk
+// rows silently going stale, widen the window so bursts coalesce into far
+// fewer full redraws instead of trying to make each redraw cheaper.
 function scheduleRefresh() {
   if (refreshTimer) clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => { refreshTimer = null; refresh(); }, 600);
+  refreshTimer = setTimeout(() => { refreshTimer = null; refresh(); }, 1500);
 }
 
 function chsFromArgs(args) {

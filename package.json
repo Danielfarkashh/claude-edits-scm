@@ -2,7 +2,7 @@
   "name": "claude-edits-scm",
   "displayName": "Claude Diff & Edit",
   "description": "Review Claude Code's edits with native diffs, per-hunk Keep/Undo, and automatic Claude-vs-you attribution so your own edits are never flagged.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "publisher": "dfarkash",
   "icon": "resources/icon.png",
   "license": "MIT",
@@ -107,7 +107,7 @@
         "claudeEdits.showFileBadge": {
           "type": "boolean",
           "default": false,
-          "description": "Show a 'C' badge on editor tabs and Explorer entries for files Claude has changed, alongside git's own M/U/A letter. Off by default — the Changed Files view, status bar counter, and CodeLenses already surface this."
+          "description": "Show a 'C' badge on editor tabs and Explorer entries for files Claude has changed. Off by default — the Changed Files view, status bar counter, and CodeLenses already surface this, and VS Code has no reliable way to combine decorations from multiple extensions, so enabling this can intermittently replace git's own M/U/A letter instead of sitting alongside it."
         }
       }
     },
