@@ -2,7 +2,7 @@
   "name": "claude-edits-scm",
   "displayName": "Claude Diff & Edit",
   "description": "Review Claude Code's edits with native diffs, per-hunk Keep/Undo, and automatic Claude-vs-you attribution so your own edits are never flagged.",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "publisher": "dfarkash",
   "icon": "resources/icon.png",
   "license": "MIT",
@@ -225,12 +225,12 @@
         {
           "command": "claudeEdits.keepAll",
           "when": "view == claudeEditsView",
-          "group": "1_bulk@1"
+          "group": "navigation@2"
         },
         {
           "command": "claudeEdits.undoAll",
           "when": "view == claudeEditsView",
-          "group": "1_bulk@2"
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -274,12 +274,12 @@
         {
           "command": "claudeEdits.keepAll",
           "when": "scmProvider == claudeEdits",
-          "group": "1_bulk@1"
+          "group": "navigation@2"
         },
         {
           "command": "claudeEdits.undoAll",
           "when": "scmProvider == claudeEdits",
-          "group": "1_bulk@2"
+          "group": "navigation@3"
         }
       ],
       "scm/resourceState/context": [
