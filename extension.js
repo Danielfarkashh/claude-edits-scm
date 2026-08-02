@@ -338,6 +338,17 @@ function scheduleRefresh() {
   refreshTimer = setTimeout(() => { refreshTimer = null; refresh(); }, 1500);
 }
 
+// The debounce above exists to smooth OUT background noise (the file-history
+// watcher firing on every Claude edit) — it should never delay feedback for
+// something the user just clicked. Keep/Undo/etc. call this instead: it
+// bypasses the debounce and awaits the real recompute, so the panel updates
+// with fresh data immediately rather than waiting up to 1.5s for the same
+// timer a background edit would have used.
+async function refreshNow() {
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+  await refresh();
+}
+
 function chsFromArgs(args) {
   const out = [];
   const visit = (a) => {
@@ -386,7 +397,7 @@ async function acceptFiles(chs) {
       vscode.window.showErrorMessage(`Claude Edits: keep failed for ${path.basename(ch.absPath)}: ${e.message}`);
     }
   }
-  scheduleRefresh();
+  await refreshNow();
   fireUiEvents();
 }
 
@@ -435,7 +446,7 @@ async function undoMany(chs, preconfirmed) {
       vscode.window.showErrorMessage(`Claude Edits: undo failed for ${path.basename(ch.absPath)}: ${e.message}`);
     }
   }
-  scheduleRefresh();
+  await refreshNow();
   fireUiEvents();
 }
 
@@ -511,8 +522,8 @@ async function keepHunk(uri, wanted) {
   if (!c) return;
   const nb = lib.applyHunkToBase(c.baseText.split('\n'), c.curText.split('\n'), c.h);
   await writeOverlay(c.ch, nb.join('\n'));
+  await refreshNow();
   fireUiEvents();
-  scheduleRefresh();
   await focusNextHunk(uri, c.ch, c.h.curStart);
 }
 
@@ -528,8 +539,8 @@ async function revertHunk(uri, wanted) {
     return;
   }
   await c.doc.save(); // persist so the disk-based list stays in sync (Ctrl+Z still works)
+  await refreshNow();
   fireUiEvents();
-  scheduleRefresh();
   await focusNextHunk(uri, c.ch, c.h.curStart);
 }
 
@@ -711,11 +722,15 @@ function activate(context) {
     vscode.window.registerFileDecorationProvider({
       onDidChangeFileDecorations: decoEmitter.event,
       provideFileDecoration(uri) {
-        if (!cfg().showFileBadge) return undefined;
         const ch = changeByUri.get(uri.toString());
         if (!ch) return undefined;
+        // The color reuses git's OWN theme tokens, so it renders identically
+        // to git's decoration even when only one provider's color "wins" —
+        // no visible collision like the badge LETTER has. Keep it always on;
+        // only the 'C' badge (which does visibly compete with git's own
+        // letter) is gated behind the setting.
         return {
-          badge: 'C', // always this one letter — just marks "Claude touched this file", nothing else varies
+          badge: cfg().showFileBadge ? 'C' : undefined,
           tooltip: statusLabel(ch),
           color: new vscode.ThemeColor(ch.status === 'created'
             ? 'gitDecoration.untrackedResourceForeground'
