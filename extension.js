@@ -70,7 +70,12 @@ async function analyzeChange(ch, claudeOnly) {
     const curText = stripBom(await fs.promises.readFile(ch.absPath, 'utf8'));
     let hunks = lib.computeHunks(effText, curText);
     let claudeOk = false;
-    if (claudeOnly && ch.ops && ch.ops.length) {
+    // bashTouched: this file was also named by a Bash command in the session.
+    // Replaying only the Edit/Write ops would "succeed" while silently
+    // missing whatever the Bash command actually did — skip replay so this
+    // falls back to showing every hunk instead of confidently mislabeling
+    // Bash-authored ones as the user's.
+    if (claudeOnly && ch.ops && ch.ops.length && !ch.bashTouched) {
       const cf = await lib.claudeFinalFor(ch); // full replay, else anchored on last backup
       if (cf !== null) {
         ch.claudeFinal = cf;
@@ -316,7 +321,11 @@ const treeProvider = {
     const a = el.analysis;
     it.description = a ? `+${a.add} −${a.del} · ${el.status}` : el.status;
     it.tooltip = `${statusLabel(el)}${a ? ` (+${a.add} −${a.del})` : ''}`
-      + (a && !a.ok && el.status !== 'deleted' ? '\nattribution unavailable — counts include all changes; review via the diff' : '')
+      + (a && !a.ok && el.status !== 'deleted'
+        ? (el.bashTouched
+          ? '\nattribution unavailable — Claude used Bash for part of this file; counts include all changes, review via the diff'
+          : '\nattribution unavailable — counts include all changes; review via the diff')
+        : '')
       + `\n${el.absPath}`;
     it.command = { title: 'Open Diff', command: 'claudeEdits.openDiff', arguments: [el] };
     it.contextValue = 'claudeEdit';
@@ -640,8 +649,10 @@ async function diagnostics() {
   for (const s of sessions.slice(0, 10)) {
     const parsed = await lib.parseSession(s);
     const under = [...parsed.files.keys()].filter((p) => r.some((root) => p.toLowerCase().startsWith(root.toLowerCase())));
-    out.appendLine(`  ${s.sessionId.slice(0, 8)} mtime=${new Date(s.mtimeMs).toISOString()} tracked=${parsed.files.size} underWorkspace≈${under.length}`);
+    const bashCandidates = parsed.bashOps.length ? lib.bashWriteCandidates(parsed) : new Set();
+    out.appendLine(`  ${s.sessionId.slice(0, 8)} mtime=${new Date(s.mtimeMs).toISOString()} tracked=${parsed.files.size} underWorkspace≈${under.length} bashOps=${parsed.bashOps.length} bashCandidates=${bashCandidates.size}`);
     for (const p of [...parsed.files.keys()].slice(0, 5)) out.appendLine(`    tracked: ${p}`);
+    for (const p of [...bashCandidates].slice(0, 5)) out.appendLine(`    bash-candidate: ${p} (needs a git repo + git-dirty match to surface)`);
   }
   try {
     const groups = await lib.computeChanges(r, { ...opts, overlaysDir });
@@ -654,17 +665,24 @@ async function diagnostics() {
   out.appendLine('— end —');
 }
 
-async function gcOverlays() {
+async function gcDir(dir) {
   const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
   let entries = [];
-  try { entries = await fs.promises.readdir(overlaysDir); } catch { return; }
+  try { entries = await fs.promises.readdir(dir); } catch { return; }
   for (const e of entries) {
-    const p = path.join(overlaysDir, e);
+    const p = path.join(dir, e);
     try {
       const st = await fs.promises.stat(p);
       if (st.mtimeMs < cutoff) await fs.promises.rm(p, { recursive: true, force: true });
     } catch { /* noop */ }
   }
+}
+
+async function gcOverlays() {
+  await gcDir(overlaysDir);
+  // materialized git HEAD blobs used as synthetic baselines for Bash-only
+  // discovered changes (see lib.js computeChanges) — same lifetime policy.
+  await gcDir(path.join(path.dirname(overlaysDir), 'git-baselines'));
 }
 
 function activate(context) {

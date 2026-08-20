@@ -23,6 +23,7 @@ const fsp = fs.promises;
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
@@ -251,6 +252,108 @@ function attributeHunks(effBaseText, curText, hunks, claudeFinalText, snapshotTe
   });
 }
 
+// ---------------------------------------------------------------------------
+// Bash-authored changes. Claude Code only checkpoints Edit/Write/NotebookEdit
+// calls (~/.claude/file-history/) — a file touched solely through Bash (sed,
+// heredocs, redirects) has no snapshot/backup at all, so it's invisible to
+// the tracking above, and a file touched by BOTH Edit/Write and Bash has its
+// Bash-authored hunks silently misattributed to the user once replay
+// "succeeds" without knowing they happened. Two independent, best-effort
+// signals close both gaps without parsing shell semantics precisely:
+//   1. extractBashWriteTargets: a heuristic regex scan of the command string
+//      for the write patterns Claude Code's own "bashFirst" prompting names
+//      (redirects, heredocs via their leading redirect, tee, sed -i).
+//   2. cross-checking the extracted path against `git status`: it must
+//      actually be dirty right now for a candidate to be trusted.
+// False negatives are safe (status quo: untracked, same as before this
+// existed). False positives are bounded by signal #2 — the odds of a bash
+// command coincidentally naming a path that is ALSO independently git-dirty
+// for an unrelated reason are low, and even then the failure mode is just
+// "shown as Claude's, unattributed" (never "hidden"), which is the same
+// fallback every other unreplayable case already uses.
+// ---------------------------------------------------------------------------
+
+function extractBashWriteTargets(command) {
+  if (typeof command !== 'string' || !command) return [];
+  const targets = new Set();
+  const unquote = (s) => s.replace(/^['"]|['"]$/g, '');
+  // > file / >> file / N> file (not fd-dup forms like 2>&1 — '&' is excluded
+  // from the bare-token charset, so those fail to match a target at all).
+  // Quoted alternatives come first so a quoted target may contain spaces.
+  for (const m of command.matchAll(/(?:^|[\s;&|(])(?:\d*>>?|&>>?)\s*(?:"([^"]+)"|'([^']+)'|([^\s'";&|<>()]+))/g)) {
+    const t = m[1] ?? m[2] ?? m[3];
+    if (t) targets.add(t);
+  }
+  // tee [-a] file — first non-flag token after the command name.
+  for (const m of command.matchAll(/\btee\b\s+((?:-{1,2}\S+\s+)*)(\S+)/g)) {
+    targets.add(unquote(m[2]));
+  }
+  // sed -i[.suffix] 'expr' file [file...] — skip flags, skip the first
+  // non-flag token (the expression), the rest are targets.
+  for (const m of command.matchAll(/\bsed\b\s+(?:-\S+\s+)*-i(?:\.\S+)?\s+(.+)/g)) {
+    let skippedExpr = false;
+    for (const tok of m[1].trim().split(/\s+/).filter(Boolean)) {
+      if (tok.startsWith('-')) continue;
+      if (!skippedExpr) { skippedExpr = true; continue; }
+      targets.add(unquote(tok));
+    }
+  }
+  return [...targets].filter((t) => t && !t.startsWith('/dev/'));
+}
+
+// -> Set<absPath>, resolved against the session's cwd.
+function bashWriteCandidates(parsed) {
+  const out = new Set();
+  for (const op of parsed.bashOps || []) {
+    if (parsed.errIds.has(op.id)) continue;
+    for (const t of extractBashWriteTargets(op.command)) {
+      const abs = path.isAbsolute(t) ? t : (parsed.cwd ? path.resolve(parsed.cwd, t) : null);
+      if (abs) out.add(abs);
+    }
+  }
+  return out;
+}
+
+function gitRun(args, cwd, encoding) {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, maxBuffer: 20 * 1024 * 1024, encoding: encoding || 'utf8' }, (err, stdout) => {
+      resolve(err ? null : stdout);
+    });
+  });
+}
+
+async function gitRepoRoot(dir) {
+  const out = await gitRun(['rev-parse', '--show-toplevel'], dir);
+  return out === null ? null : out.trim();
+}
+
+// -> Map<absPath, 'modified'|'untracked'> for the repo's current working tree.
+async function gitDirtyPaths(top) {
+  const map = new Map();
+  const out = await gitRun(['status', '--porcelain=v1', '-uall', '--no-renames'], top);
+  if (out === null) return map;
+  for (const line of out.split('\n')) {
+    if (line.length < 4) continue;
+    const code = line.slice(0, 2);
+    const rel = line.slice(3);
+    map.set(path.resolve(top, rel), code.includes('?') ? 'untracked' : 'modified');
+  }
+  return map;
+}
+
+// Writes the file's HEAD blob to a cache file and returns its path (like a
+// Claude Code @v1 backup, but sourced from git instead) — null if there is
+// no HEAD blob to read (new-but-staged file, detached/empty repo, etc).
+async function materializeGitHead(top, absPath, cacheDir) {
+  const rel = path.relative(top, absPath).split(path.sep).join('/');
+  const buf = await gitRun(['show', `HEAD:${rel}`], top, 'buffer');
+  if (buf === null) return null;
+  await fsp.mkdir(cacheDir, { recursive: true }).catch(() => {});
+  const dest = path.join(cacheDir, hashPath(canonPath(absPath)) + '.head');
+  await fsp.writeFile(dest, buf);
+  return dest;
+}
+
 // Minimal glob support for path scoping: '**' spans path separators, '*'
 // stays within one segment. Case-insensitive on win32; matches on
 // forward-slashed absolute paths.
@@ -373,6 +476,7 @@ async function parseSession(s) {
   let raw = '';
   let needHeader = true;
   let toolOps = []; // ordered {id, name, input} of file-mutating tool calls
+  let bashOps = []; // ordered {id, command} of Bash tool calls, for the discovery/attribution fallback below
   let opsChars = 0;
   const errIds = new Set(); // tool_use ids whose result was an error
   try { raw = await fsp.readFile(s.jsonlPath, 'utf8'); } catch { /* unreadable -> empty */ }
@@ -387,12 +491,16 @@ async function parseSession(s) {
     try { obj = JSON.parse(line); } catch { continue; }
     if (!cwd && obj.cwd) cwd = obj.cwd;
     if (!slug && obj.slug) slug = obj.slug;
-    if (obj.type === 'assistant' && toolOps && obj.message && Array.isArray(obj.message.content)) {
+    if (obj.type === 'assistant' && (toolOps || bashOps) && obj.message && Array.isArray(obj.message.content)) {
       for (const it of obj.message.content) {
-        if (it && it.type === 'tool_use' && FILE_TOOLS.has(it.name) && it.input) {
+        if (!it || it.type !== 'tool_use' || !it.input) continue;
+        if (toolOps && FILE_TOOLS.has(it.name)) {
           opsChars += JSON.stringify(it.input).length;
-          if (opsChars > TOOL_OPS_CHAR_BUDGET) { toolOps = null; break; }
-          toolOps.push({ id: it.id, name: it.name, input: it.input });
+          if (opsChars > TOOL_OPS_CHAR_BUDGET) toolOps = null;
+          else toolOps.push({ id: it.id, name: it.name, input: it.input });
+        } else if (bashOps && it.name === 'Bash' && typeof it.input.command === 'string') {
+          bashOps.push({ id: it.id, command: it.input.command });
+          if (bashOps.length > 5000) bashOps = null; // safety cap, mirrors the ops char budget's intent
         }
       }
     } else if (obj.type === 'user' && obj.message && Array.isArray(obj.message.content)) {
@@ -434,7 +542,7 @@ async function parseSession(s) {
   }
   // Claude's own title first; the first prompt is the previous behaviour, now a fallback.
   const title = aiTitle || prompt || slug || `session ${s.sessionId.slice(0, 8)}`;
-  const parsed = { mtimeMs: s.mtimeMs, files, title, cwd, toolOps, errIds };
+  const parsed = { mtimeMs: s.mtimeMs, files, title, cwd, toolOps, errIds, bashOps: bashOps || [] };
   parseCache.set(s.jsonlPath, parsed);
   return parsed;
 }
@@ -501,10 +609,23 @@ async function computeChanges(workspaceRoots, opts) {
   const sessions = await listSessionFiles(workspaceRoots, opts.lookbackMs, opts.scanCap || 60);
   const seen = new Set();
   const groups = [];
+  // Per-call caches so multiple sessions sharing a repo (common) only pay for
+  // one `git rev-parse`/`git status` each, not one per session.
+  const gitTopCache = new Map(); // dir -> Promise<top|null>
+  const cachedGitTop = (dir) => {
+    if (!gitTopCache.has(dir)) gitTopCache.set(dir, gitRepoRoot(dir));
+    return gitTopCache.get(dir);
+  };
+  const gitDirtyCache = new Map(); // top -> Promise<Map>
+  const cachedGitDirty = (top) => {
+    if (!gitDirtyCache.has(top)) gitDirtyCache.set(top, gitDirtyPaths(top));
+    return gitDirtyCache.get(top);
+  };
   for (const s of sessions) {
     if (groups.length >= opts.maxSessions) break;
     const parsed = await parseSession(s);
-    if (!parsed.files.size) continue;
+    const bashCandidates = parsed.bashOps.length ? bashWriteCandidates(parsed) : new Set();
+    if (!parsed.files.size && !bashCandidates.size) continue;
     const byHash = await backupsByHash(s.sessionId);
     const changes = [];
     for (const [abs, info] of parsed.files) {
@@ -559,7 +680,55 @@ async function computeChanges(workspaceRoots, opts) {
             return canonPath(oAbs) === canonPath(abs);
           })
         : null;
-      changes.push({ absPath: abs, status, baselinePath, snapshotPath, backupFiles, sessionId: s.sessionId, ops });
+      // Present in file-history AND named by a Bash command this session: a
+      // replay that only sees the Edit/Write ops would "succeed" while
+      // silently missing the Bash-authored part. Force attribution to fall
+      // back to "show everything" (extension.js skips replay when this is
+      // set) rather than let it confidently mislabel those hunks as the user's.
+      const bashTouched = bashCandidates.has(abs);
+      changes.push({ absPath: abs, status, baselinePath, snapshotPath, backupFiles, sessionId: s.sessionId, ops, bashTouched });
+    }
+    // Files Claude touched ONLY through Bash never got a file-history entry
+    // above, so they're still entirely undiscovered at this point. A git
+    // repo's own dirty-state is the only other source of "what changed" we
+    // have; use it as a stand-in for Claude Code's own checkpoint, gated on
+    // this session actually having named the path in a Bash command.
+    if (bashCandidates.size && opts.overlaysDir) {
+      const gitBaselinesDir = path.join(path.dirname(opts.overlaysDir), 'git-baselines');
+      for (const abs of bashCandidates) {
+        if (seen.has(abs)) continue;
+        if (!underAny(abs, workspaceRoots) && !matchAnyGlob(abs, opts.includeGlobs)) continue;
+        if (matchAnyGlob(abs, opts.excludeGlobs)) continue;
+        const curBuf = await fsp.readFile(abs).catch(() => null);
+        if (curBuf === null) continue; // bash-deleted files aren't discoverable this way
+        const top = await cachedGitTop(path.dirname(abs));
+        if (!top) continue; // not a git repo (or git unavailable) -> no trustworthy baseline
+        const dirty = await cachedGitDirty(top);
+        const kind = dirty.get(abs);
+        if (!kind) continue; // git doesn't see it as changed -> nothing to show
+        let created = kind === 'untracked';
+        let snapshotPath = null;
+        if (!created) {
+          snapshotPath = await materializeGitHead(top, abs, gitBaselinesDir);
+          if (!snapshotPath) continue; // no HEAD blob to diff against -> skip rather than guess
+        }
+        let overlay = null;
+        const op = overlayPathFor(opts.overlaysDir, abs);
+        if (await fsp.access(op).then(() => true, () => false)) overlay = op;
+        if (overlay) created = false;
+        const baselinePath = overlay || snapshotPath;
+        const baseBuf = created ? Buffer.alloc(0) : await fsp.readFile(baselinePath).catch(() => null);
+        if (baseBuf === null) continue;
+        let status = null;
+        if (!stripBomBuf(baseBuf).equals(stripBomBuf(curBuf))) status = created ? 'created' : 'modified';
+        if (!status) continue;
+        seen.add(abs);
+        // ops: null -> analyzeChange never attempts a replay (there is nothing
+        // to replay — Bash isn't Edit/Write), so this always falls back to
+        // showing every hunk, unattributed. Same safe default as any other
+        // unreplayable case.
+        changes.push({ absPath: abs, status, baselinePath, snapshotPath, backupFiles: null, sessionId: s.sessionId, ops: null, bashTouched: true, viaBash: true });
+      }
     }
     if (changes.length) {
       groups.push({ sessionId: s.sessionId, mtimeMs: s.mtimeMs, title: parsed.title, changes });
@@ -588,4 +757,6 @@ module.exports = {
   claudeFinalFor,
   globToRegExp,
   matchAnyGlob,
+  extractBashWriteTargets,
+  bashWriteCandidates,
 };

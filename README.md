@@ -44,11 +44,11 @@ Keeping (a hunk or a whole file) records the accepted content in a private **ove
 
 ## Notes & limitations
 
-- Only edits made via Claude's `Edit`/`Write`/`NotebookEdit` tools are tracked. Changes Claude makes through **Bash** (`sed`, `mv`, generated scripts) are not checkpointed by Claude Code and won't appear. Renames show as deleted at the old path.
+- Edits made via Claude's `Edit`/`Write`/`NotebookEdit` tools are checkpointed by Claude Code itself and tracked exactly. Changes Claude makes through **Bash** (`sed -i`, redirects, heredocs, `tee`) aren't checkpointed by Claude Code at all — as a best-effort fallback, the extension scans the session transcript's Bash commands for write targets and cross-checks them against `git status` in a git workspace, so such changes still surface (unattributed — no per-hunk Keep/Revert, just the file-level diff). Outside a git repo, or for write patterns the heuristic doesn't recognize, they still won't appear. Renames show as deleted at the old path.
 - "Undo" on a file you hand-edited after Claude rolls your edits back too — check the diff first.
 - The list redraws on a short debounce (not instantly) while Claude is actively editing, to avoid flickering the panel on every single edit.
 - Settings: `claudeEdits.lookbackHours` (48), `claudeEdits.maxSessions` (6), `claudeEdits.codeLens` (true), `claudeEdits.claudeOnly` (true), `claudeEdits.scmView` (false), `claudeEdits.showFileBadge` (false), `claudeEdits.includeGlobs` (`["**/.claude/**"]`), `claudeEdits.excludeGlobs` (`["/tmp/claude-*/**"]`).
-- Data format is Claude Code internal (verified on 2.1.220); a future Claude Code release could change it.
+- Data format is Claude Code internal (verified on 2.1.220 and 2.1.24x); a future Claude Code release could change it. 2.1.221+ added an undocumented, staged-rollout "bashFirst" system-prompt addition that steers `auto`/`bypassPermissions` sessions toward Bash over `Edit`/`Write` — see the Bash fallback above and [issue #1](https://github.com/Danielfarkashh/claude-edits-scm/issues/1).
 
 ## Download & install
 
