@@ -2,7 +2,7 @@
   "name": "claude-edits-scm",
   "displayName": "Claude Diff & Edit",
   "description": "Review Claude Code's edits with native diffs, per-hunk Keep/Undo, and automatic Claude-vs-you attribution so your own edits are never flagged.",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "publisher": "dfarkash",
   "icon": "resources/icon.png",
   "license": "MIT",

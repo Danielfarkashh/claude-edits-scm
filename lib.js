@@ -267,6 +267,11 @@ function attributeHunks(effBaseText, curText, hunks, claudeFinalText, snapshotTe
 //      (redirects, heredocs via their leading redirect, tee, sed -i).
 //   2. cross-checking the extracted path against `git status`: it must
 //      actually be dirty right now for a candidate to be trusted.
+//   3. timing: a git-dirty file whose mtime falls inside one of the session's
+//      Bash calls (tool_use -> tool_result timestamps) was written by that
+//      call, whatever its shape (python heredocs, cp, $vars, awk...). Calls
+//      longer than BASH_WINDOW_MAX_MS are ignored so a long build or watch
+//      cannot claim edits the user saved meanwhile.
 // False negatives are safe (status quo: untracked, same as before this
 // existed). False positives are bounded by signal #2 — the odds of a bash
 // command coincidentally naming a path that is ALSO independently git-dirty
@@ -275,20 +280,20 @@ function attributeHunks(effBaseText, curText, hunks, claudeFinalText, snapshotTe
 // fallback every other unreplayable case already uses.
 // ---------------------------------------------------------------------------
 
-function extractBashWriteTargets(command) {
+function bashWriteTargetsAt(command) {
   if (typeof command !== 'string' || !command) return [];
-  const targets = new Set();
-  const unquote = (s) => s.replace(/^['"]|['"]$/g, '');
+  const out = [];
+  const unquote = (t) => t.replace(/^['"]|['"]$/g, '');
   // > file / >> file / N> file (not fd-dup forms like 2>&1 — '&' is excluded
   // from the bare-token charset, so those fail to match a target at all).
   // Quoted alternatives come first so a quoted target may contain spaces.
   for (const m of command.matchAll(/(?:^|[\s;&|(])(?:\d*>>?|&>>?)\s*(?:"([^"]+)"|'([^']+)'|([^\s'";&|<>()]+))/g)) {
     const t = m[1] ?? m[2] ?? m[3];
-    if (t) targets.add(t);
+    if (t) out.push({ t, at: m.index });
   }
   // tee [-a] file — first non-flag token after the command name.
   for (const m of command.matchAll(/\btee\b\s+((?:-{1,2}\S+\s+)*)(\S+)/g)) {
-    targets.add(unquote(m[2]));
+    out.push({ t: unquote(m[2]), at: m.index });
   }
   // sed -i[.suffix] 'expr' file [file...] — skip flags, skip the first
   // non-flag token (the expression), the rest are targets.
@@ -297,23 +302,84 @@ function extractBashWriteTargets(command) {
     for (const tok of m[1].trim().split(/\s+/).filter(Boolean)) {
       if (tok.startsWith('-')) continue;
       if (!skippedExpr) { skippedExpr = true; continue; }
-      targets.add(unquote(tok));
+      out.push({ t: unquote(tok), at: m.index });
     }
   }
-  return [...targets].filter((t) => t && !t.startsWith('/dev/'));
+  return out.filter(({ t }) => t && !t.startsWith('/dev/'));
 }
 
-// -> Set<absPath>, resolved against the session's cwd.
-function bashWriteCandidates(parsed) {
-  const out = new Set();
+function extractBashWriteTargets(command) {
+  return [...new Set(bashWriteTargetsAt(command).map(({ t }) => t))];
+}
+
+// `cd dir` at command position: relative write targets after it resolve
+// against dir, not the session cwd (`cd repo && sed -i ... file` is the most
+// common shape in real transcripts).
+const CD_RE = /(?:^|[;&|(\n])\s*cd\s+("[^"]*"|'[^']*'|[^\s;&|()]+)/g;
+
+function expandBashPath(t, dir) {
+  const e = t.replace(/^['"]|['"]$/g, '').replace(/^(?:~|\$HOME|\$\{HOME\})(?=[\\/]|$)/, os.homedir());
+  if (!e || e.includes('$') || e.startsWith('~')) return null;
+  if (path.isAbsolute(e)) return path.normalize(e);
+  return dir ? path.resolve(dir, e) : null;
+}
+
+// -> {targets: Set<absPath>, dirs: Set<absPath>}: write targets of the
+// session's successful Bash calls, plus every directory those calls cd'd into.
+function scanBashOps(parsed) {
+  const targets = new Set();
+  const dirs = new Set();
   for (const op of parsed.bashOps || []) {
-    if (parsed.errIds.has(op.id)) continue;
-    for (const t of extractBashWriteTargets(op.command)) {
-      const abs = path.isAbsolute(t) ? t : (parsed.cwd ? path.resolve(parsed.cwd, t) : null);
-      if (abs) out.add(abs);
+    const cds = [...op.command.matchAll(CD_RE)].map((m) => ({ cd: m[1], at: m.index }));
+    const writes = parsed.errIds.has(op.id) ? [] : bashWriteTargetsAt(op.command);
+    let dir = parsed.cwd || null;
+    for (const ev of [...cds, ...writes].sort((a, b) => a.at - b.at)) {
+      if (ev.cd !== undefined) {
+        dir = expandBashPath(ev.cd, dir);
+        if (dir) dirs.add(dir);
+      } else {
+        const abs = expandBashPath(ev.t, dir);
+        if (abs) targets.add(abs);
+      }
     }
   }
-  return out;
+  return { targets, dirs };
+}
+
+function bashWriteCandidates(parsed) {
+  return scanBashOps(parsed).targets;
+}
+
+const BASH_WINDOW_MAX_MS = 60e3;
+const BASH_WINDOW_SLACK_BEFORE_MS = 1e3;
+const BASH_WINDOW_SLACK_AFTER_MS = 2e3;
+
+// -> sorted, merged [start, end] intervals during which the session's Bash
+// calls were running. Errored calls count: a non-zero exit can follow a write.
+function bashWindows(parsed) {
+  const raw = (parsed.bashOps || [])
+    .filter((op) => op.startMs && op.endMs >= op.startMs && op.endMs - op.startMs <= BASH_WINDOW_MAX_MS)
+    .map((op) => [op.startMs - BASH_WINDOW_SLACK_BEFORE_MS, op.endMs + BASH_WINDOW_SLACK_AFTER_MS])
+    .sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const w of raw) {
+    const last = merged[merged.length - 1];
+    if (last && w[0] <= last[1]) last[1] = Math.max(last[1], w[1]);
+    else merged.push(w);
+  }
+  return merged;
+}
+
+function inWindows(windows, t) {
+  let lo = 0;
+  let hi = windows.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (t < windows[mid][0]) hi = mid - 1;
+    else if (t > windows[mid][1]) lo = mid + 1;
+    else return true;
+  }
+  return false;
 }
 
 function gitRun(args, cwd, encoding) {
@@ -480,7 +546,12 @@ async function parseSession(s) {
   let raw = '';
   let needHeader = true;
   let toolOps = []; // ordered {id, name, input} of file-mutating tool calls
-  let bashOps = []; // ordered {id, command} of Bash tool calls, for the discovery/attribution fallback below
+  let bashOps = []; // ordered {id, command, startMs, endMs} of Bash tool calls, for the discovery/attribution fallback below
+  const pendingBash = new Map(); // tool_use id -> bashOps entry still waiting for its result's timestamp
+  const mentionsPendingBash = (line) => {
+    for (const id of pendingBash.keys()) if (line.includes(id)) return true;
+    return false;
+  };
   let opsChars = 0;
   const errIds = new Set(); // tool_use ids whose result was an error
   try { raw = await fsp.readFile(s.jsonlPath, 'utf8'); } catch { /* unreadable -> empty */ }
@@ -490,7 +561,8 @@ async function parseSession(s) {
     // cwd/prompt live at the top: once they are in, the bulk of the log (big tool
     // results) only needs a substring test, not a full JSON.parse.
     if (!needHeader && !line.includes(FILE_HISTORY_MARKER) && !line.includes(AI_TITLE_MARKER)
-      && !line.includes(CUSTOM_TITLE_MARKER) && !line.includes(TOOL_USE_MARKER) && !line.includes(TOOL_ERROR_MARKER)) continue;
+      && !line.includes(CUSTOM_TITLE_MARKER) && !line.includes(TOOL_USE_MARKER) && !line.includes(TOOL_ERROR_MARKER)
+      && !mentionsPendingBash(line)) continue;
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
     if (!cwd && obj.cwd) cwd = obj.cwd;
@@ -503,13 +575,21 @@ async function parseSession(s) {
           if (opsChars > TOOL_OPS_CHAR_BUDGET) toolOps = null;
           else toolOps.push({ id: it.id, name: it.name, input: it.input });
         } else if (bashOps && it.name === 'Bash' && typeof it.input.command === 'string') {
-          bashOps.push({ id: it.id, command: it.input.command });
+          const op = { id: it.id, command: it.input.command, startMs: Date.parse(obj.timestamp) || 0, endMs: 0 };
+          bashOps.push(op);
+          if (op.startMs) pendingBash.set(it.id, op);
           if (bashOps.length > 5000) bashOps = null; // safety cap, mirrors the ops char budget's intent
         }
       }
     } else if (obj.type === 'user' && obj.message && Array.isArray(obj.message.content)) {
       for (const it of obj.message.content) {
-        if (it && it.type === 'tool_result' && it.is_error && it.tool_use_id) errIds.add(it.tool_use_id);
+        if (!it || it.type !== 'tool_result' || !it.tool_use_id) continue;
+        if (it.is_error) errIds.add(it.tool_use_id);
+        const op = pendingBash.get(it.tool_use_id);
+        if (op) {
+          op.endMs = Date.parse(obj.timestamp) || 0;
+          pendingBash.delete(it.tool_use_id);
+        }
       }
     }
     // First-write wins in both branches: entries arrive in edit order, so the
@@ -626,10 +706,34 @@ async function computeChanges(workspaceRoots, opts) {
     if (!gitDirtyCache.has(top)) gitDirtyCache.set(top, gitDirtyPaths(top));
     return gitDirtyCache.get(top);
   };
+  const mtimeCache = new Map(); // absPath -> Promise<mtimeMs|null>
+  const cachedMtime = (abs) => {
+    if (!mtimeCache.has(abs)) mtimeCache.set(abs, fsp.stat(abs).then((st) => st.mtimeMs, () => null));
+    return mtimeCache.get(abs);
+  };
+  const inScope = (top) => underAny(top, workspaceRoots) || workspaceRoots.some((r) => underAny(r, [top]));
   for (const s of sessions) {
     if (groups.length >= opts.maxSessions) break;
     const parsed = await parseSession(s);
-    const bashCandidates = parsed.bashOps.length ? bashWriteCandidates(parsed) : new Set();
+    const scan = parsed.bashOps.length ? scanBashOps(parsed) : { targets: new Set(), dirs: new Set() };
+    const bashCandidates = scan.targets;
+    const windows = bashWindows(parsed);
+    if (windows.length) {
+      const dirs = new Set([...workspaceRoots, ...scan.dirs, ...[...bashCandidates].map((t) => path.dirname(t))]);
+      if (parsed.cwd) dirs.add(parsed.cwd);
+      const tops = new Set();
+      for (const d of dirs) {
+        const top = await cachedGitTop(d);
+        if (top && inScope(top)) tops.add(top);
+      }
+      for (const top of tops) {
+        for (const abs of (await cachedGitDirty(top)).keys()) {
+          if (bashCandidates.has(abs)) continue;
+          const m = await cachedMtime(abs);
+          if (m !== null && inWindows(windows, m)) bashCandidates.add(abs);
+        }
+      }
+    }
     if (!parsed.files.size && !bashCandidates.size) continue;
     const byHash = await backupsByHash(s.sessionId);
     const changes = [];
@@ -764,4 +868,5 @@ module.exports = {
   matchAnyGlob,
   extractBashWriteTargets,
   bashWriteCandidates,
+  bashWindows,
 };

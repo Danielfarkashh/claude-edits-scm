@@ -90,6 +90,35 @@ async function main() {
       ]));
       assert(lib.bashWriteCandidates(parsed).has(abs), 'absolute path target left as-is');
     }
+    {
+      const parsed = await lib.parseSession(session([
+        userMsg('do stuff'),
+        bashUse('b1', "cd sub/repo && sed -i 's/a/b/' x.js && cd ../other && echo hi > y.txt"),
+        bashResult('b1', false),
+        bashUse('b2', 'echo hi > ~/home-file.txt; echo hi > "$OUT/skipped.txt"'),
+        bashResult('b2', false),
+      ]));
+      const cands = lib.bashWriteCandidates(parsed);
+      assert(cands.has(path.resolve(W, 'sub/repo/x.js')), 'relative target after `cd` resolves against the cd target');
+      assert(cands.has(path.resolve(W, 'sub/other/y.txt')), 'a second relative `cd` chains from the first');
+      assert(cands.has(path.join(os.homedir(), 'home-file.txt')), '~ expands to the home directory');
+      assert(![...cands].some((c) => c.includes('skipped')), 'unexpandable $VAR targets are dropped');
+    }
+    {
+      const T = Date.parse('2026-11-10T12:00:00.000Z');
+      const at = (ms) => new Date(T + ms).toISOString();
+      const parsed = await lib.parseSession(session([
+        userMsg('do stuff'),
+        { ...bashUse('t1', 'python3 - <<EOF\nopen("f","w")\nEOF'), timestamp: at(0) },
+        { ...bashResult('t1', false), timestamp: at(3000) },
+        { ...bashUse('t2', 'npm run build'), timestamp: at(10000) },
+        { ...bashResult('t2', false), timestamp: at(10000 + 5 * 60e3) },
+        { ...bashUse('t3', 'still running'), timestamp: at(20 * 60e3) },
+      ]));
+      const w = lib.bashWindows(parsed);
+      eq(w.length, 1, 'only the short, finished Bash call yields a window');
+      eq(JSON.stringify(w[0]), JSON.stringify([T - 1000, T + 5000]), 'window spans tool_use..tool_result plus slack');
+    }
     fs.rmSync(dir, { recursive: true, force: true });
     console.log(`OK: bashWriteCandidates (${checks} checks so far)`);
   }
@@ -121,6 +150,7 @@ async function main() {
     git('config', 'user.name', 'Test');
     fs.writeFileSync(path.join(W, 'tracked.txt'), 'line1\nline2\nline3\n');
     fs.writeFileSync(path.join(W, 'mixed.txt'), 'alpha\nbeta\ngamma\n');
+    for (const f of ['py-written.txt', 'user-edit.txt', 'during-build.txt']) fs.writeFileSync(path.join(W, f), 'orig\n');
     git('add', '.');
     git('commit', '-q', '-m', 'init');
 
@@ -135,6 +165,18 @@ async function main() {
     fs.mkdirSync(path.join(lib.FILE_HISTORY_DIR, sessionId), { recursive: true });
     fs.writeFileSync(path.join(lib.FILE_HISTORY_DIR, sessionId, `${mixedHash}@v1`), 'alpha\nbeta\ngamma\n');
     fs.writeFileSync(mixedAbs, 'alpha\nBETA-EDITED\ngamma-bash-appended\n');
+
+    // Timing discovery: no command names these files, only their mtimes
+    // tie them (or not) to a Bash call.
+    const T = Date.now() - 3600e3;
+    const at = (ms) => new Date(T + ms).toISOString();
+    const touch = (f, ms) => {
+      fs.writeFileSync(path.join(W, f), 'changed\n');
+      fs.utimesSync(path.join(W, f), (T + ms) / 1000, (T + ms) / 1000);
+    };
+    touch('py-written.txt', 1500); // inside the 3s python call
+    touch('user-edit.txt', 30e3); // between calls: the user's own edit
+    touch('during-build.txt', 200e3); // inside a 5-minute build: too long to trust
 
     fs.mkdirSync(projDir, { recursive: true });
     const lines = [
@@ -157,6 +199,14 @@ async function main() {
         { type: 'tool_use', id: 'b3', name: 'Bash', input: { command: 'echo more >> mixed.txt' } },
       ] } },
       { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b3', is_error: false }] } },
+      { type: 'assistant', timestamp: at(0), message: { role: 'assistant', content: [
+        { type: 'tool_use', id: 'b4', name: 'Bash', input: { command: "python3 - <<'EOF'\nfrom pathlib import Path\nPath('py-written.txt').write_text('changed')\nEOF" } },
+      ] } },
+      { type: 'user', timestamp: at(3000), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b4', is_error: false }] } },
+      { type: 'assistant', timestamp: at(100e3), message: { role: 'assistant', content: [
+        { type: 'tool_use', id: 'b5', name: 'Bash', input: { command: 'npm run build' } },
+      ] } },
+      { type: 'user', timestamp: at(100e3 + 5 * 60e3), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b5', is_error: false }] } },
     ];
     fs.writeFileSync(jsonlPath, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
 
@@ -187,6 +237,11 @@ async function main() {
       assert(mixedCh.bashTouched, 'file-history-tracked file ALSO named by a Bash command is flagged bashTouched (attribution-safety fix)');
       assert(Array.isArray(mixedCh.ops) && mixedCh.ops.length === 1, 'mixed.txt still carries its real Edit op unaffected');
     }
+
+    const pyCh = byPath.get(path.join(W, 'py-written.txt'));
+    assert(pyCh && pyCh.viaBash, 'file written during a Bash call is discovered by timing, with no path in the command');
+    assert(!byPath.has(path.join(W, 'user-edit.txt')), 'dirty file modified outside every Bash call is left to the user');
+    assert(!byPath.has(path.join(W, 'during-build.txt')), 'a call longer than the window cap cannot claim files');
 
     console.log(`OK: computeChanges bash discovery + attribution-safety (${checks} checks so far)`);
   } finally {
