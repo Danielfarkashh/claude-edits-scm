@@ -62,6 +62,33 @@ function padLine(bytes) {
     eq(p.title, 'Document title generation process', 'last ai-title wins');
   }
 
+  // --- a user rename (custom-title) beats ai-title, even when Claude keeps
+  // re-appending its own title after the rename (the real log shape) ---
+  {
+    const p = await lib.parseSession(session([
+      userMsg('Some prompt'),
+      aiTitle('Lab portal project hosting'),
+      SNAP,
+      { type: 'custom-title', sessionId: 'ignored', customTitle: 'First rename' },
+      aiTitle('Lab portal project hosting'),
+      padLine(64 * 1024),
+      { type: 'custom-title', customTitle: 'Idan Onboarding', sessionId: 'ignored' },
+      aiTitle('Lab portal project hosting'),
+      { type: 'custom-title', customTitle: '   ' },
+      { type: 'custom-title', customTitle: 7 },
+    ]));
+    eq(p.title, 'Idan Onboarding', 'last non-blank custom-title wins over ai-title');
+  }
+
+  // --- a rename appended to an already-parsed log shows up on the next parse ---
+  {
+    const lines = [userMsg('Rename refresh'), SNAP, aiTitle('Weird generated name')];
+    const s = session(lines);
+    eq((await lib.parseSession(s)).title, 'Weird generated name', 'ai-title before the rename');
+    fs.appendFileSync(s.jsonlPath, jsonl([{ type: 'custom-title', customTitle: 'Renamed', sessionId: 'x' }]));
+    eq((await lib.parseSession({ ...s, mtimeMs: s.mtimeMs + 1 })).title, 'Renamed', 'rename is picked up after the log grows');
+  }
+
   // --- no ai-title yet: the first real prompt is still used (previous behaviour) ---
   {
     const p = await lib.parseSession(session([

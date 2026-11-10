@@ -7,7 +7,7 @@ Diff and review **Claude Code**'s edits, additive to the workflow you already ha
 
 ## Where changes show up (no navigation needed)
 
-- **"Changed Files" view inside the Claude Code sidebar** (stacked under the chat), grouped by session, with a count badge on the Claude icon. Sessions carry Claude's own generated title — the same one `claude --resume` lists — falling back to the first prompt for sessions too young to have one.
+- **"Changed Files" view inside the Claude Code sidebar** (stacked under the chat), grouped by session, with a count badge on the Claude icon. Sessions carry their name as `claude --resume` lists it — your rename if you gave one, otherwise Claude's generated title — falling back to the first prompt for sessions too young to have one.
 - **Status bar**: `⧉ Claude N` — click to focus the list.
 - Optional **`C` badge** (always that one letter — just means "Claude touched this file", nothing else varies) on editor tabs / Explorer — off by default since the list below, the status bar, and CodeLenses already cover it; enable with `claudeEdits.showFileBadge`. **Known limitation:** VS Code has no reliable way to combine decorations from multiple extensions, so enabling this can intermittently replace git's own M/U/A letter instead of showing alongside it — leave it off if you rely on git's status letters.
 - Changes to **Claude's own memory** (`~/.claude/…`) are listed even though they live outside your workspace; throwaway scratchpad files under `/tmp/claude-*` are hidden (both tunable via `claudeEdits.includeGlobs` / `excludeGlobs`).

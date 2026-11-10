@@ -15,6 +15,8 @@
 //     lines of {"type":"ai-title","aiTitle":"<session title>","sessionId":...} — the
 //       human-readable name `claude --resume` shows. Re-appended as Claude refines it
 //       (136 of them in an 8.2 MB log), so the LAST one wins; absent in young sessions.
+//     lines of {"type":"custom-title","customTitle":"<name>","sessionId":...} — written
+//       when the user renames the session, re-appended like ai-title; beats ai-title.
 //   ~/.claude/file-history/<session-uuid>/<hash>@v<N>  = file content BEFORE the Nth edit;
 //     v1 (lowest N present) is the pre-session baseline.
 
@@ -453,6 +455,7 @@ const FILE_HISTORY_MARKER = '"file-history-';
 // apart in a real log (p99 177 KB), so any window narrower than one turn's tool
 // output drops the label back to the first prompt until the next title lands.
 const AI_TITLE_MARKER = '"ai-title"';
+const CUSTOM_TITLE_MARKER = '"custom-title"';
 // Tool calls that mutate files, needed to attribute hunks to Claude vs the
 // user. The type marker matches only assistant tool_use blocks — tool RESULT
 // lines carry "tool_use_id" but never "type":"tool_use".
@@ -470,6 +473,7 @@ async function parseSession(s) {
   if (cached && cached.mtimeMs === s.mtimeMs) return cached;
   const files = new Map(); // absPath -> {backupFileName|null}
   let aiTitle = ''; // Claude's own session title, if it has generated one yet
+  let customTitle = ''; // the user's rename, if any
   let prompt = ''; // first real user prompt
   let slug = '';
   let cwd = '';
@@ -486,7 +490,7 @@ async function parseSession(s) {
     // cwd/prompt live at the top: once they are in, the bulk of the log (big tool
     // results) only needs a substring test, not a full JSON.parse.
     if (!needHeader && !line.includes(FILE_HISTORY_MARKER) && !line.includes(AI_TITLE_MARKER)
-      && !line.includes(TOOL_USE_MARKER) && !line.includes(TOOL_ERROR_MARKER)) continue;
+      && !line.includes(CUSTOM_TITLE_MARKER) && !line.includes(TOOL_USE_MARKER) && !line.includes(TOOL_ERROR_MARKER)) continue;
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
     if (!cwd && obj.cwd) cwd = obj.cwd;
@@ -530,6 +534,8 @@ async function parseSession(s) {
       track(obj.trackingPath, obj.backup);
     } else if (obj.type === 'ai-title' && typeof obj.aiTitle === 'string' && obj.aiTitle.trim()) {
       aiTitle = obj.aiTitle.trim(); // no !aiTitle guard: Claude refines it, last wins
+    } else if (obj.type === 'custom-title' && typeof obj.customTitle === 'string' && obj.customTitle.trim()) {
+      customTitle = obj.customTitle.trim();
     } else if (!prompt && obj.type === 'user' && obj.message) {
       const c = obj.message.content;
       let text = typeof c === 'string' ? c
@@ -540,8 +546,7 @@ async function parseSession(s) {
     // slug is only consulted when there is no prompt, so these two end the header scan
     if (cwd && prompt) needHeader = false;
   }
-  // Claude's own title first; the first prompt is the previous behaviour, now a fallback.
-  const title = aiTitle || prompt || slug || `session ${s.sessionId.slice(0, 8)}`;
+  const title = customTitle || aiTitle || prompt || slug || `session ${s.sessionId.slice(0, 8)}`;
   const parsed = { mtimeMs: s.mtimeMs, files, title, cwd, toolOps, errIds, bashOps: bashOps || [] };
   parseCache.set(s.jsonlPath, parsed);
   return parsed;
