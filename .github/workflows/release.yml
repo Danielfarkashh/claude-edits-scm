@@ -4,9 +4,11 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -24,6 +26,10 @@ jobs:
       - run: npm install
       - run: npm run package
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         run: gh release create "${{ github.ref_name }}" *.vsix --title "${{ github.ref_name }}" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
+      # Trusted Publishing: no PAT; the Marketplace policy trusts this repo + release.yml.
+      - name: Publish to VS Code Marketplace
+        run: npx -y @vscode/vsce@4.1.0 publish --oidc --packagePath *.vsix
