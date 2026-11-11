@@ -390,9 +390,12 @@ function gitRun(args, cwd, encoding) {
   });
 }
 
+// Resolved from dir itself rather than --show-toplevel, which returns the real
+// path: through a symlink (macOS /var -> /private/var) or a Windows 8.3 short
+// name, git's paths would then never match the ones Claude Code recorded.
 async function gitRepoRoot(dir) {
-  const out = await gitRun(['rev-parse', '--show-toplevel'], dir);
-  return out === null ? null : out.trim();
+  const out = await gitRun(['rev-parse', '--show-cdup'], dir);
+  return out === null ? null : path.resolve(dir, out.trim());
 }
 
 // -> Map<absPath, 'modified'|'untracked'> for the repo's current working tree.

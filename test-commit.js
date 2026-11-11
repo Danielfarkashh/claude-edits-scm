@@ -23,7 +23,7 @@ async function main() {
     console.log('SKIP: git not available');
     return;
   }
-  const W = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'claude-edits-commit-')));
+  const W = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-edits-commit-'));
   const overlaysDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-edits-commitov-'));
   const sessionId = 'commit01-1111-2222-3333-444444444444';
   const projDir = path.join(lib.PROJECTS_DIR, lib.sanitizeProjectDir(W));
