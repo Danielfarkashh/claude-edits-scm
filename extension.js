@@ -29,6 +29,7 @@ function cfg() {
     claudeOnly: c.get('claudeOnly', true),
     scmView: c.get('scmView', false),
     showFileBadge: c.get('showFileBadge', false),
+    clearOnCommit: c.get('clearOnCommit', true),
     includeGlobs: c.get('includeGlobs', ['**/.claude/**']),
     excludeGlobs: c.get('excludeGlobs', ['/tmp/claude-*/**']),
   };
@@ -140,6 +141,38 @@ async function writeOverlay(ch, content) {
   refreshGen++; // invalidate any in-flight refresh computed against pre-keep state
 }
 
+// Committed content becomes the accepted baseline, exactly like Keep, so later
+// edits to the file show only their own delta. No refreshGen bump: this runs
+// inside refresh() and must not invalidate it.
+async function keepCommitted(ch) {
+  try {
+    const op = lib.overlayPathFor(overlaysDir, ch.absPath);
+    await fs.promises.mkdir(path.dirname(op), { recursive: true });
+    await fs.promises.writeFile(op, await fs.promises.readFile(ch.absPath));
+  } catch { /* file vanished mid-refresh: the next refresh sees it as it is */ }
+}
+
+// A commit changes no file Claude's watchers see, so follow git's HEAD instead.
+async function watchGitCommits(context) {
+  try {
+    const ext = vscode.extensions.getExtension('vscode.git');
+    if (!ext) return;
+    const api = (ext.isActive ? ext.exports : await ext.activate()).getAPI(1);
+    const heads = new Map();
+    const track = (repo) => {
+      heads.set(repo, repo.state.HEAD && repo.state.HEAD.commit);
+      context.subscriptions.push(repo.state.onDidChange(() => {
+        const head = repo.state.HEAD && repo.state.HEAD.commit;
+        if (head === heads.get(repo)) return;
+        heads.set(repo, head);
+        if (cfg().clearOnCommit) scheduleRefresh();
+      }));
+    };
+    api.repositories.forEach(track);
+    context.subscriptions.push(api.onDidOpenRepository(track));
+  } catch { /* git extension disabled or API changed: the 60s rearm still catches commits */ }
+}
+
 function openDocFor(absPath) {
   const uriStr = vscode.Uri.file(absPath).toString();
   return vscode.workspace.textDocuments.find((d) => d.uri.toString() === uriStr);
@@ -198,7 +231,7 @@ async function refresh() {
   const conf = cfg();
   let groups = [];
   try {
-    groups = r.length ? await lib.computeChanges(r, { ...conf, overlaysDir }) : [];
+    groups = r.length ? await lib.computeChanges(r, { ...conf, overlaysDir, markCommitted: conf.clearOnCommit }) : [];
   } catch (e) {
     console.error('claude-edits-scm refresh failed:', e);
   }
@@ -212,6 +245,7 @@ async function refresh() {
     const changes = [];
     for (const ch of g.changes) {
       if (isDismissed(ch, dism)) continue;
+      if (ch.committed) { await keepCommitted(ch); continue; }
       await analyzeChange(ch, conf.claudeOnly);
       // hide files whose remaining diffs are the user's own edits
       if (conf.claudeOnly && ch.analysis?.ok && ch.status === 'modified' && ch.analysis.claudeCount === 0) continue;
@@ -795,6 +829,7 @@ function activate(context) {
   );
 
   armWatchers();
+  watchGitCommits(context);
   const rearm = setInterval(() => { armWatchers(); scheduleRefresh(); }, 60 * 1000); // safety net for missed fs events
   context.subscriptions.push({ dispose: () => clearInterval(rearm) });
   refresh();

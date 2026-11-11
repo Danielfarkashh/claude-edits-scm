@@ -20,6 +20,7 @@ Diff and review **Claude Code**'s edits, additive to the workflow you already ha
 - Each file shows **`+added −removed` line counts** for the changes under review.
 - **Click a file** → native diff editor: accepted baseline vs current content.
 - **Per file**: inline **Keep ✓** / **Undo ⟲** buttons (also per session, and Keep All / Undo All in the title bar).
+- **Commit = Keep**: once a changed file is committed to git (tracked, nothing left uncommitted), it leaves the list as if you had kept it, and later edits show only their own delta. This applies to commits made by you or by Claude. Turn off with `claudeEdits.clearOnCommit: false`.
 - **Per individual change (hunk)**: CodeLens actions above every change, in the normal editor *and* the right side of the diff editor:
   - **✓ Keep this change** — the chunk is absorbed into your accepted baseline and disappears from the diff/gutter immediately. Review chunk by chunk; when you keep the last one, the file drops off the list entirely.
   - **↶ Revert** — puts the baseline content back for that chunk only (a normal edit; `Ctrl+Z` works).
@@ -47,7 +48,7 @@ Keeping (a hunk or a whole file) records the accepted content in a private **ove
 - Edits made via Claude's `Edit`/`Write`/`NotebookEdit` tools are checkpointed by Claude Code itself and tracked exactly. Changes Claude makes through **Bash** (`sed -i`, redirects, heredocs, `tee`) aren't checkpointed by Claude Code at all. As a fallback, a file that `git status` shows as changed is attributed to a session when one of its Bash commands names the file (following `cd`, `~` and `$HOME`), or when the file was last modified while one of its Bash calls was running (calls over 60s don't count). The timing check catches any write style, including Python one-liners, `cp` and `$VAR` paths. Such changes surface unattributed: file-level diff only, no per-hunk Keep/Revert. Outside a git repo they still won't appear, nor will a Bash-written file you edited again afterwards unless the command named it. Renames show as deleted at the old path.
 - "Undo" on a file you hand-edited after Claude rolls your edits back too — check the diff first.
 - The list redraws on a short debounce (not instantly) while Claude is actively editing, to avoid flickering the panel on every single edit.
-- Settings: `claudeEdits.lookbackHours` (48), `claudeEdits.maxSessions` (6), `claudeEdits.codeLens` (true), `claudeEdits.claudeOnly` (true), `claudeEdits.scmView` (false), `claudeEdits.showFileBadge` (false), `claudeEdits.includeGlobs` (`["**/.claude/**"]`), `claudeEdits.excludeGlobs` (`["/tmp/claude-*/**"]`).
+- Settings: `claudeEdits.lookbackHours` (48), `claudeEdits.maxSessions` (6), `claudeEdits.codeLens` (true), `claudeEdits.claudeOnly` (true), `claudeEdits.scmView` (false), `claudeEdits.showFileBadge` (false), `claudeEdits.clearOnCommit` (true), `claudeEdits.includeGlobs` (`["**/.claude/**"]`), `claudeEdits.excludeGlobs` (`["/tmp/claude-*/**"]`).
 - Data format is Claude Code internal (verified on 2.1.220 and 2.1.24x); a future Claude Code release could change it. 2.1.221+ added an undocumented, staged-rollout "bashFirst" system-prompt addition that steers `auto`/`bypassPermissions` sessions toward Bash over `Edit`/`Write` — see the Bash fallback above and [issue #1](https://github.com/Danielfarkashh/claude-edits-scm/issues/1).
 
 ## Download & install

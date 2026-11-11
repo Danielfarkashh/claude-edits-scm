@@ -28,6 +28,8 @@ jobs:
       - run: node test-title.js
       - run: node test-delta.js
       - run: node test-attrib.js 2000
+      - run: node test-bashfirst.js
+      - run: node test-commit.js
 
   package:
     runs-on: ubuntu-latest

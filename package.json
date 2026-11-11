@@ -2,7 +2,7 @@
   "name": "claude-edits-scm",
   "displayName": "Claude Diff & Edit",
   "description": "Review Claude Code's edits with native diffs, per-hunk Keep/Undo, and automatic Claude-vs-you attribution so your own edits are never flagged.",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "publisher": "dfarkash",
   "icon": "resources/icon.png",
   "license": "MIT",
@@ -39,7 +39,7 @@
     "onStartupFinished"
   ],
   "scripts": {
-    "test": "node test-hunks.js && node test-win32.js && node test-title.js && node test-delta.js && node test-attrib.js && node test-bashfirst.js",
+    "test": "node test-hunks.js && node test-win32.js && node test-title.js && node test-delta.js && node test-attrib.js && node test-bashfirst.js && node test-commit.js",
     "package": "vsce package"
   },
   "devDependencies": {
@@ -103,6 +103,11 @@
             "/tmp/claude-*/**"
           ],
           "description": "Paths to never list (wins over includes). Default hides Claude's throwaway scratchpad under /tmp."
+        },
+        "claudeEdits.clearOnCommit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Treat committing a file as Keep: once a changed file's content is committed to git (tracked, nothing uncommitted), it leaves the Changed Files list, and only later edits show. Applies to commits made by you or by Claude."
         },
         "claudeEdits.showFileBadge": {
           "type": "boolean",

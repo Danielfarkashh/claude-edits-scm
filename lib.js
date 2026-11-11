@@ -398,9 +398,9 @@ async function gitRepoRoot(dir) {
 // -> Map<absPath, 'modified'|'untracked'> for the repo's current working tree.
 async function gitDirtyPaths(top) {
   const map = new Map();
-  const out = await gitRun(['status', '--porcelain=v1', '-uall', '--no-renames'], top);
+  const out = await gitRun(['status', '--porcelain=v1', '-z', '-uall', '--no-renames'], top);
   if (out === null) return map;
-  for (const line of out.split('\n')) {
+  for (const line of out.split('\0')) {
     if (line.length < 4) continue;
     const code = line.slice(0, 2);
     const rel = line.slice(3);
@@ -843,7 +843,32 @@ async function computeChanges(workspaceRoots, opts) {
       groups.push({ sessionId: s.sessionId, mtimeMs: s.mtimeMs, title: parsed.title, changes });
     }
   }
+  if (opts.markCommitted) await markCommitted(groups, cachedGitTop, cachedGitDirty);
   return groups;
+}
+
+// Flags changes whose current content is what git has committed: tracked and
+// clean (so equal to HEAD), yet still different from the pre-session baseline.
+// Someone committed that content, which the extension treats as an implicit Keep.
+async function markCommitted(groups, cachedGitTop, cachedGitDirty) {
+  const byTop = new Map(); // top -> [change]
+  for (const ch of groups.flatMap((g) => g.changes)) {
+    if (ch.status === 'deleted' || ch.viaBash) continue;
+    const top = await cachedGitTop(path.dirname(ch.absPath));
+    if (!top) continue;
+    if (!byTop.has(top)) byTop.set(top, []);
+    byTop.get(top).push(ch);
+  }
+  for (const [top, chs] of byTop) {
+    const dirty = new Set([...(await cachedGitDirty(top)).keys()].map(canonPath));
+    const clean = chs.filter((ch) => !dirty.has(canonPath(ch.absPath)));
+    if (!clean.length) continue;
+    const rels = clean.map((ch) => path.relative(top, ch.absPath).split(path.sep).join('/'));
+    const out = await gitRun(['--literal-pathspecs', 'ls-files', '-z', '--', ...rels], top);
+    if (!out) continue;
+    const tracked = new Set(out.split('\0').filter(Boolean).map((rel) => canonPath(path.resolve(top, rel))));
+    for (const ch of clean) if (tracked.has(canonPath(ch.absPath))) ch.committed = true;
+  }
 }
 
 module.exports = {
