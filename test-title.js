@@ -89,6 +89,22 @@ function padLine(bytes) {
     eq((await lib.parseSession({ ...s, mtimeMs: s.mtimeMs + 1 })).title, 'Renamed', 'rename is picked up after the log grows');
   }
 
+  // --- the custom-title.json sidecar wins, and a rename that only touches the
+  // sidecar (log unchanged, same mtime) still shows up ---
+  {
+    const s = session([userMsg('Sidecar rename'), SNAP, aiTitle('Generated name'),
+      { type: 'custom-title', customTitle: 'Old rename' }]);
+    eq((await lib.parseSession(s)).title, 'Old rename', 'log custom-title without a sidecar');
+    const sidecar = path.join(dir, s.sessionId, 'custom-title.json');
+    fs.mkdirSync(path.dirname(sidecar));
+    fs.writeFileSync(sidecar, JSON.stringify({ customTitle: 'Sidecar name' }));
+    eq((await lib.parseSession(s)).title, 'Sidecar name', 'sidecar beats the log, same mtime');
+    fs.writeFileSync(sidecar, JSON.stringify({ customTitle: '  ' }));
+    eq((await lib.parseSession(s)).title, 'Old rename', 'blank sidecar is ignored');
+    fs.writeFileSync(sidecar, '{not json');
+    eq((await lib.parseSession(s)).title, 'Old rename', 'malformed sidecar is ignored');
+  }
+
   // --- no ai-title yet: the first real prompt is still used (previous behaviour) ---
   {
     const p = await lib.parseSession(session([

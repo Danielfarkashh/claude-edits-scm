@@ -17,6 +17,7 @@
 //       (136 of them in an 8.2 MB log), so the LAST one wins; absent in young sessions.
 //     lines of {"type":"custom-title","customTitle":"<name>","sessionId":...} — written
 //       when the user renames the session, re-appended like ai-title; beats ai-title.
+//       The same name is also kept in <projdir>/<session-uuid>/custom-title.json, which wins.
 //   ~/.claude/file-history/<session-uuid>/<hash>@v<N>  = file content BEFORE the Nth edit;
 //     v1 (lowest N present) is the pre-session baseline.
 
@@ -538,9 +539,21 @@ const TOOL_OPS_CHAR_BUDGET = 30e6;
 
 const parseCache = new Map(); // jsonlPath -> {mtimeMs, files, title, cwd, toolOps, errIds}
 
+// <projdir>/<session-uuid>/custom-title.json = {"customTitle":"<name>"}, rewritten on
+// every rename; it can change without the log growing, so it is read on each call.
+async function readCustomTitleFile(s) {
+  try {
+    const t = JSON.parse(await fsp.readFile(path.join(path.dirname(s.jsonlPath), s.sessionId, 'custom-title.json'), 'utf8')).customTitle;
+    return typeof t === 'string' ? t.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
 async function parseSession(s) {
+  const renamed = await readCustomTitleFile(s);
   const cached = parseCache.get(s.jsonlPath);
-  if (cached && cached.mtimeMs === s.mtimeMs) return cached;
+  if (cached && cached.mtimeMs === s.mtimeMs && cached.renamed === renamed) return cached;
   const files = new Map(); // absPath -> {backupFileName|null}
   let aiTitle = ''; // Claude's own session title, if it has generated one yet
   let customTitle = ''; // the user's rename, if any
@@ -630,8 +643,8 @@ async function parseSession(s) {
     // slug is only consulted when there is no prompt, so these two end the header scan
     if (cwd && prompt) needHeader = false;
   }
-  const title = customTitle || aiTitle || prompt || slug || `session ${s.sessionId.slice(0, 8)}`;
-  const parsed = { mtimeMs: s.mtimeMs, files, title, cwd, toolOps, errIds, bashOps: bashOps || [] };
+  const title = renamed || customTitle || aiTitle || prompt || slug || `session ${s.sessionId.slice(0, 8)}`;
+  const parsed = { mtimeMs: s.mtimeMs, renamed, files, title, cwd, toolOps, errIds, bashOps: bashOps || [] };
   parseCache.set(s.jsonlPath, parsed);
   return parsed;
 }
