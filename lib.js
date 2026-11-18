@@ -398,7 +398,7 @@ async function gitRepoRoot(dir) {
   return out === null ? null : path.resolve(dir, out.trim());
 }
 
-// -> Map<absPath, 'modified'|'untracked'> for the repo's current working tree.
+// -> Map<canonPath, {abs, kind: 'modified'|'untracked'}> for the repo's working tree.
 async function gitDirtyPaths(top) {
   const map = new Map();
   const out = await gitRun(['status', '--porcelain=v1', '-z', '-uall', '--no-renames'], top);
@@ -407,7 +407,8 @@ async function gitDirtyPaths(top) {
     if (line.length < 4) continue;
     const code = line.slice(0, 2);
     const rel = line.slice(3);
-    map.set(path.resolve(top, rel), code.includes('?') ? 'untracked' : 'modified');
+    const abs = path.resolve(top, rel);
+    map.set(canonPath(abs), { abs, kind: code.includes('?') ? 'untracked' : 'modified' });
   }
   return map;
 }
@@ -719,21 +720,23 @@ async function computeChanges(workspaceRoots, opts) {
     if (groups.length >= opts.maxSessions) break;
     const parsed = await parseSession(s);
     const scan = parsed.bashOps.length ? scanBashOps(parsed) : { targets: new Set(), dirs: new Set() };
-    const bashCandidates = scan.targets;
+    // Keyed by canonPath: the same file can arrive as C:\... from Claude Code and
+    // c:\... from VS Code's workspace root, and must still be one row.
+    const bashCandidates = new Map([...scan.targets].map((t) => [canonPath(t), t]));
     const windows = bashWindows(parsed);
     if (windows.length) {
-      const dirs = new Set([...workspaceRoots, ...scan.dirs, ...[...bashCandidates].map((t) => path.dirname(t))]);
+      const dirs = new Set([...workspaceRoots, ...scan.dirs, ...[...bashCandidates.values()].map((t) => path.dirname(t))]);
       if (parsed.cwd) dirs.add(parsed.cwd);
-      const tops = new Set();
+      const tops = new Map();
       for (const d of dirs) {
         const top = await cachedGitTop(d);
-        if (top && inScope(top)) tops.add(top);
+        if (top && inScope(top)) tops.set(canonPath(top), top);
       }
-      for (const top of tops) {
-        for (const abs of (await cachedGitDirty(top)).keys()) {
-          if (bashCandidates.has(abs)) continue;
+      for (const top of tops.values()) {
+        for (const [key, { abs }] of await cachedGitDirty(top)) {
+          if (bashCandidates.has(key)) continue;
           const m = await cachedMtime(abs);
-          if (m !== null && inWindows(windows, m)) bashCandidates.add(abs);
+          if (m !== null && inWindows(windows, m)) bashCandidates.set(key, abs);
         }
       }
     }
@@ -741,7 +744,7 @@ async function computeChanges(workspaceRoots, opts) {
     const byHash = await backupsByHash(s.sessionId);
     const changes = [];
     for (const [abs, info] of parsed.files) {
-      if (seen.has(abs)) continue;
+      if (seen.has(canonPath(abs))) continue;
       // Scope: workspace files plus extra includes (e.g. Claude's memory under
       // ~/.claude, which lives outside any repo workspace); excludes win (e.g.
       // the /tmp scratchpad Claude uses for throwaway files).
@@ -780,7 +783,7 @@ async function computeChanges(workspaceRoots, opts) {
       if (curBuf === null) status = created ? null : 'deleted';
       else if (!stripBomBuf(baseBuf).equals(stripBomBuf(curBuf))) status = created ? 'created' : 'modified';
       if (!status) continue; // net no-op: fall through so an older session's diff can surface
-      seen.add(abs);
+      seen.add(canonPath(abs));
       // Ordered successful file-tool calls Claude made to THIS file in THIS
       // session; null when unknown (ops budget blown / old transcript format).
       const ops = parsed.toolOps
@@ -797,7 +800,7 @@ async function computeChanges(workspaceRoots, opts) {
       // silently missing the Bash-authored part. Force attribution to fall
       // back to "show everything" (extension.js skips replay when this is
       // set) rather than let it confidently mislabel those hunks as the user's.
-      const bashTouched = bashCandidates.has(abs);
+      const bashTouched = bashCandidates.has(canonPath(abs));
       changes.push({ absPath: abs, status, baselinePath, snapshotPath, backupFiles, sessionId: s.sessionId, ops, bashTouched });
     }
     // Files Claude touched ONLY through Bash never got a file-history entry
@@ -807,8 +810,8 @@ async function computeChanges(workspaceRoots, opts) {
     // this session actually having named the path in a Bash command.
     if (bashCandidates.size && opts.overlaysDir) {
       const gitBaselinesDir = path.join(path.dirname(opts.overlaysDir), 'git-baselines');
-      for (const abs of bashCandidates) {
-        if (seen.has(abs)) continue;
+      for (const abs of bashCandidates.values()) {
+        if (seen.has(canonPath(abs))) continue;
         if (!underAny(abs, workspaceRoots) && !matchAnyGlob(abs, opts.includeGlobs)) continue;
         if (matchAnyGlob(abs, opts.excludeGlobs)) continue;
         const curBuf = await fsp.readFile(abs).catch(() => null);
@@ -816,7 +819,7 @@ async function computeChanges(workspaceRoots, opts) {
         const top = await cachedGitTop(path.dirname(abs));
         if (!top) continue; // not a git repo (or git unavailable) -> no trustworthy baseline
         const dirty = await cachedGitDirty(top);
-        const kind = dirty.get(abs);
+        const kind = dirty.get(canonPath(abs))?.kind;
         if (!kind) continue; // git doesn't see it as changed -> nothing to show
         let created = kind === 'untracked';
         let snapshotPath = null;
@@ -834,7 +837,7 @@ async function computeChanges(workspaceRoots, opts) {
         let status = null;
         if (!stripBomBuf(baseBuf).equals(stripBomBuf(curBuf))) status = created ? 'created' : 'modified';
         if (!status) continue;
-        seen.add(abs);
+        seen.add(canonPath(abs));
         // ops: null -> analyzeChange never attempts a replay (there is nothing
         // to replay — Bash isn't Edit/Write), so this always falls back to
         // showing every hunk, unattributed. Same safe default as any other
@@ -863,7 +866,7 @@ async function markCommitted(groups, cachedGitTop, cachedGitDirty) {
     byTop.get(top).push(ch);
   }
   for (const [top, chs] of byTop) {
-    const dirty = new Set([...(await cachedGitDirty(top)).keys()].map(canonPath));
+    const dirty = await cachedGitDirty(top);
     const clean = chs.filter((ch) => !dirty.has(canonPath(ch.absPath)));
     if (!clean.length) continue;
     const rels = clean.map((ch) => path.relative(top, ch.absPath).split(path.sep).join('/'));
