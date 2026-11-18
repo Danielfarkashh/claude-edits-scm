@@ -39,7 +39,7 @@
     "onStartupFinished"
   ],
   "scripts": {
-    "test": "node test-hunks.js && node test-win32.js && node test-title.js && node test-delta.js && node test-attrib.js && node test-bashfirst.js && node test-commit.js",
+    "test": "node test-hunks.js && node test-win32.js && node test-title.js && node test-delta.js && node test-attrib.js && node test-bashfirst.js && node test-commit.js && node test-pathcase.js",
     "package": "vsce package"
   },
   "devDependencies": {
