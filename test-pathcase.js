@@ -1,5 +1,5 @@
 'use strict';
-// Path-spelling tests (github.com/Danielfarkashh/claude-edits-scm/issues/2#issuecomment):
+// Path-spelling tests (github.com/Danielfarkashh/claude-edits-scm/issues/2):
 // VS Code hands the extension a lowercase drive letter (c:\...) while Claude
 // Code records C:\... . A file reached through both spellings, its
 // file-history entry and the git-dirty scan that timing discovery runs from the
